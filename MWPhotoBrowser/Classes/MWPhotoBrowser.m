@@ -1152,12 +1152,4 @@ navigationBarBackgroundImageLandscapePhone = _navigationBarBackgroundImageLandsc
 #endif
 }
 
-- (void)showFromView:(UIView*)view;
-{
-    [self.view addSubview:view];
-    
-    UIWindow *win = [[UIApplication sharedApplication] keyWindow];
-    [win addSubview:self.view];
-}
-
 @end
