@@ -29,7 +29,6 @@
 @property (nonatomic, strong) UIImage *underlyingImage;
 
 // Methods
-- (void)imageDidFinishLoadingSoDecompress;
 - (void)imageLoadingComplete;
 
 @end
@@ -79,7 +78,6 @@ caption = _caption;
 }
 
 - (void)dealloc {
-    [[SDWebImageManager sharedManager] cancelForDelegate:self];
 }
 
 #pragma mark MWPhoto Protocol Methods
@@ -100,8 +98,19 @@ caption = _caption;
             [self performSelectorInBackground:@selector(loadImageFromFileAsync) withObject:nil];
         } else if (_photoURL) {
             // Load async from web (using SDWebImage)
-            SDWebImageManager *manager = [SDWebImageManager sharedManager];
-            [manager downloadWithURL:_photoURL delegate:self];
+            [[SDWebImageManager sharedManager] downloadWithURL:_photoURL
+                                                       options:0
+                                                      progress:nil
+                                                     completed:^(UIImage *image, NSError *error, SDImageCacheType cacheType, BOOL finished)
+            {
+                if (error) {
+                    self.underlyingImage = nil;
+                    MWLog(@"SDWebImage failed to download image: %@", error);
+                } else {
+                    self.underlyingImage = image;
+                }
+                [self imageLoadingComplete];
+            }];
         } else {
             // Failed - no source
             self.underlyingImage = nil;
@@ -113,7 +122,6 @@ caption = _caption;
 // Release if we can get it again from path or url
 - (void)unloadUnderlyingImage {
     _loadingInProgress = NO;
-    [[SDWebImageManager sharedManager] cancelForDelegate:self];
 	if (self.underlyingImage && (_photoPath || _photoURL)) {
 		self.underlyingImage = nil;
 	}
@@ -124,61 +132,30 @@ caption = _caption;
 // Called in background
 // Load image in background from local file
 - (void)loadImageFromFileAsync {
-    @try {
-        NSError *error = nil;
-        NSData *data = [NSData dataWithContentsOfFile:_photoPath options:NSDataReadingUncached error:&error];
-        if (!error) {
-            self.underlyingImage = [[UIImage alloc] initWithData:data];
-        } else {
-            self.underlyingImage = nil;
-            MWLog(@"Photo from file error: %@", error);
+    @autoreleasepool {
+        @try {
+            NSError *error = nil;
+            NSData *data = [NSData dataWithContentsOfFile:_photoPath options:NSDataReadingUncached error:&error];
+            if (!error) {
+                self.underlyingImage = [[UIImage alloc] initWithData:data];
+            } else {
+                self.underlyingImage = nil;
+                MWLog(@"Photo from file error: %@", error);
+            }
+        } @catch (NSException *exception) {
+        } @finally {
+            [self performSelectorOnMainThread:@selector(imageLoadingComplete) withObject:nil waitUntilDone:NO];
         }
-    } @catch (NSException *exception) {
-    } @finally {
-        [self performSelectorOnMainThread:@selector(imageDidFinishLoadingSoDecompress) withObject:nil waitUntilDone:NO];
     }
 }
 
 // Called on main
-- (void)imageDidFinishLoadingSoDecompress {
-    NSAssert([[NSThread currentThread] isMainThread], @"This method must be called on the main thread.");
-    if (self.underlyingImage) {
-        // Decode image async to avoid lagging when UIKit lazy loads
-        [[SDWebImageDecoder sharedImageDecoder] decodeImage:self.underlyingImage withDelegate:self userInfo:nil];
-    } else {
-        // Failed
-        [self imageLoadingComplete];
-    }
-}
-
 - (void)imageLoadingComplete {
     NSAssert([[NSThread currentThread] isMainThread], @"This method must be called on the main thread.");
     // Complete so notify
     _loadingInProgress = NO;
     [[NSNotificationCenter defaultCenter] postNotificationName:MWPHOTO_LOADING_DID_END_NOTIFICATION
                                                         object:self];
-}
-
-#pragma mark - SDWebImage Delegate
-
-// Called on main
-- (void)webImageManager:(SDWebImageManager *)imageManager didFinishWithImage:(UIImage *)image {
-    self.underlyingImage = image;
-    [self imageDidFinishLoadingSoDecompress];
-}
-
-// Called on main
-- (void)webImageManager:(SDWebImageManager *)imageManager didFailWithError:(NSError *)error {
-    self.underlyingImage = nil;
-    MWLog(@"SDWebImage failed to download image: %@", error);
-    [self imageDidFinishLoadingSoDecompress];
-}
-
-// Called on main
-- (void)imageDecoder:(SDWebImageDecoder *)decoder didFinishDecodingImage:(UIImage *)image userInfo:(NSDictionary *)userInfo {
-    // Finished compression so we're complete
-    self.underlyingImage = image;
-    [self imageLoadingComplete];
 }
 
 @end
